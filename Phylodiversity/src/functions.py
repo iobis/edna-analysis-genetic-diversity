@@ -8,6 +8,7 @@ import pandas as pd
 import glob
 import shutil
 from Bio import Phylo
+import csv
 
 pbar = None
 
@@ -74,12 +75,12 @@ def importdata(folder_path):
 
 		# Combine the data based on the 'occurrenceID' field
         combined_data = pd.concat([combined_data, mergeddata], ignore_index=True)
-
+        #break
     return combined_data
 
 def cleaninputdata(input_data):
     clean_input_data = input_data[(~input_data['kingdom'].isin(['Bacteria', 'Fungi', 'undef_Bacteria_bacteria', 'Archaea']) & \
-                            ~input_data['phylum'].isin(['Acidobacteria', 'Bacillariophyta', 'Bacteria incertae sedis', 'Cyanobacteria', 'Deferribacteres', 'Firmicutes', 'Proteobacteria', 'Verrucomicrobia', 'Tenericutes', 'Spirochaetes']) & \
+                            ~input_data['phylum'].isin(['Acidobacteria', 'Bacteria incertae sedis', 'Cyanobacteria', 'Deferribacteres', 'Firmicutes', 'Proteobacteria', 'Verrucomicrobia', 'Tenericutes', 'Spirochaetes']) & \
                         ~input_data['scientificName'].isin(['Bacteria'])
     )]
     
@@ -97,7 +98,7 @@ def write_fasta(primer_name, file_name, df):
     os.makedirs("outputs/unaligned_fasta", exist_ok=True)
     with open("outputs/unaligned_fasta/"+file_name, 'a') as f:
         for index, row in df.iterrows():
-            fasta_identifier = f">{row['asv_pattern']}_{row['kingdom']}_{row['phylum']}_{row['class']}_{row['order']}_{row['family']}_{row['scientificName']}_{primer_name}\n"
+            fasta_identifier = f">{row['asv_pattern']}_{row['materialSampleID']}_{row['kingdom']}_{row['phylum']}_{row['class']}_{row['order']}_{row['family']}_{row['scientificName']}_{primer_name}\n"
             fasta_identifier = fasta_identifier.replace(" ", "_")
             sequence = row['DNA_sequence'] + '\n'
             f.write(fasta_identifier)
@@ -149,48 +150,64 @@ def createphylogeny(aligned_fasta_list):
     return outputfiles    
     
 def faith_pd_subset(tree, subset_leaves):
-    """
-    Calculate Faith's Phylogenetic Diversity (PD) for a subset of leaves in a given tree.
+    pd_value = 0
+    errors = 0
+    for node in subset_leaves:
+        if tree.find_clades({"name": node}):
+            try:
+                pd_value += tree.distance(node)
+            except:
+                try:
+                    pd_value += tree.distance("_R_" + node) 
+                except:
+                    print("error: "+node)
+                    errors += 1
+    return pd_value, errors
 
-    Parameters:
-    - tree (Bio.Phylo.BaseTree.Tree): Phylogenetic tree object.
-    - subset_leaves (list): List of leaf labels for the subset.
-
-    Returns:
-    - float: Faith's PD value for the subset.
-    """
-    subset_leaves = set(subset_leaves)
-    subset_tree = tree.copy()
-    
-    # Prune the tree to include only the subset of leaves
-    subset_tree.prune(subset_leaves)
-    
-    # Calculate Faith's PD for the subset
-    pd_value = sum(subset_tree.distance(node) for node in subset_tree.get_terminals())
-    return pd_value
-
-def get_tip_list(site, cleaned_input_data):
-    site_data = cleaned_input_data[cleaned_input_data['pcr_primer_name_forward'] == site]
-    print(site_data)
-    site_data['asv_pattern'] = site_data['occurrenceID'].str.split("_", n=1).str[0]
-    columns_to_concatenate = ['asv_pattern', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName', 'pcr_primer_name_forward']
-    tip_list = site_data.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])), axis=1).tolist()
-    print(tip_list)
+def get_tip_list(tree_file, site, cleaned_input_data):
+    #gets list of tips that are from a site for a specific primer
+    site_data = cleaned_input_data[cleaned_input_data['higherGeography'] == site]
+    if tree_file.replace("_aligned.tre", "") == "MiFish_MiMammal":
+        
+        site_primer_data = site_data[
+            (site_data['pcr_primer_name_forward'] == 'MiFish-UE-F') | 
+            (site_data['pcr_primer_name_forward'] == 'MiMammal-UEB-F')
+        ]
+    else:
+        primer = tree_file.replace("_aligned.tre", "")
+        site_primer_data = site_data[site_data['pcr_primer_name_forward'] == primer]
+    site_primer_data_asv = remove_duplicate_seqs(site_primer_data)
+    columns_to_concatenate = ['asv_pattern', 'materialSampleID', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName', 'pcr_primer_name_forward']
+    tip_list = site_primer_data_asv.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_'), axis=1).tolist()
+    return tip_list
 
     
 def calculatePD(input_tree_files, cleaned_input_data):
     site_names = cleaned_input_data['higherGeography'].unique()
+    site_names = site_names[~pd.isna(site_names)]
     
-    for tree_file in input_tree_files:
-        for site in site_names:
-            get_tip_list(site, cleaned_input_data)
-        
+    with open("PD_raw_out.csv", 'w') as csv_file:
+        with open("PD_perspecies_out.csv", 'w') as csv_file2:
+            csv_writer = csv.writer(csv_file, delimiter=',')
+            csv_writer.writerow([''] + input_tree_files)
+            
+            csv_writer2 = csv.writer(csv_file2, delimiter=',')
+            csv_writer2.writerow([''] + input_tree_files)
+                
+            for site in site_names:
+                row_data = [site]
+                row_data2 = [site]
+                for tree_file in input_tree_files:
+                    subset_of_leaves = get_tip_list(tree_file, site, cleaned_input_data)
+                    phylo_tree = Phylo.read("outputs/fasttree/"+tree_file, 'newick')
+                    pd_value_subset, errors = faith_pd_subset(phylo_tree, subset_of_leaves)
+                    row_data.append(str(pd_value_subset))
+                    row_data2.append(str(pd_value_subset/len(subset_of_leaves)))
+                    print(f'site: {site}, tree/locus: {tree_file}, PD: {pd_value_subset}, errors: {errors}')
+                csv_writer.writerow(row_data)
+                csv_writer2.writerow(row_data2)
+            
     
     
-    subset_of_leaves = ['leaf1', 'leaf2', 'leaf3']  # Replace with the labels of your subset
     
-    # Read the phylogenetic tree from a Newick file
-    phylo_tree = Phylo.read(tree_file, 'newick')
     
-    # Calculate Faith's PD for the subset of leaves
-    pd_value_subset = faith_pd_subset(phylo_tree, subset_of_leaves)
