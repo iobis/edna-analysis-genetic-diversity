@@ -12,6 +12,7 @@ import csv
 
 pbar = None
 
+
 def show_progress(block_num, block_size, total_size):
     global pbar
     if pbar is None:
@@ -51,6 +52,7 @@ def downloaddata(url, destination_folder="."):
     # Remove the zip file after extraction
     os.remove(zip_file_path)
 
+
 def importdata(folder_path):
     # Get a list of all files in the folder
     pattern = os.path.join(folder_path, '*_DNADerivedData.tsv')
@@ -71,38 +73,43 @@ def importdata(folder_path):
         DNADeriveddata = pd.read_csv(file_name, sep='\t', low_memory=False)
         Occurrencedata = pd.read_csv(file_path, sep='\t', low_memory=False)
         mergeddata = pd.merge(DNADeriveddata, Occurrencedata, on='occurrenceID', how='inner')
-        
 
-		# Combine the data based on the 'occurrenceID' field
         combined_data = pd.concat([combined_data, mergeddata], ignore_index=True)
-        #break
+
     return combined_data
 
 def cleaninputdata(input_data):
     clean_input_data = input_data[(~input_data['kingdom'].isin(['Bacteria', 'Fungi', 'undef_Bacteria_bacteria', 'Archaea']) & \
-                            ~input_data['phylum'].isin(['Acidobacteria', 'Bacteria incertae sedis', 'Cyanobacteria', 'Deferribacteres', 'Firmicutes', 'Proteobacteria', 'Verrucomicrobia', 'Tenericutes', 'Spirochaetes']) & \
-                        ~input_data['scientificName'].isin(['Bacteria'])
+                                   ~input_data['phylum'].isin(['Acidobacteria', 'Bacteria incertae sedis', 'Cyanobacteria', 'Deferribacteres', 'Firmicutes', 'Proteobacteria', 'Verrucomicrobia', 'Tenericutes', 'Spirochaetes']) & \
+                                   ~input_data['scientificName'].isin(['Bacteria'])
     )]
     
     #maybe remove incertae sedis
-    
     return clean_input_data
 
 
 def remove_duplicate_seqs(df):
-    df['asv_pattern'] = df['occurrenceID'].str.split("_", n=1).str[0]
-    df_filtered = df.drop_duplicates(subset='asv_pattern', keep='first')
-    return df_filtered
 
-def write_fasta(primer_name, file_name, df):
+    df[['asv_number', 'EE_number', 'rest']] = df['occurrenceID'].str.split('_', n=2, expand=True)
+    df_grouped = df.groupby(['asv_number', 'DNA_sequence'])['EE_number'].agg(lambda x: '_'.join(x)).reset_index()
+    result_df = pd.merge(df, df_grouped, on=['asv_number', 'DNA_sequence'])
+    return result_df
+
+def write_fasta(file_name, df):
+    current_asv = ''
+    current_EE = ''
     os.makedirs("outputs/unaligned_fasta", exist_ok=True)
     with open("outputs/unaligned_fasta/"+file_name, 'a') as f:
         for index, row in df.iterrows():
-            fasta_identifier = f">{row['asv_pattern']}_{row['materialSampleID']}_{row['kingdom']}_{row['phylum']}_{row['class']}_{row['order']}_{row['family']}_{row['scientificName']}_{primer_name}\n"
-            fasta_identifier = fasta_identifier.replace(" ", "_")
+            if current_asv == row['asv_number'] and current_EE == row['EE_number_y']:
+                continue
+            fasta_identifier = f">{row['asv_number']}_{row['EE_number_y']}_{row['rest']}_{row['kingdom']}_{row['phylum']}_{row['class']}_{row['order']}_{row['family']}_{row['scientificName']}\n"
+            fasta_identifier = fasta_identifier.replace(" ", "_").replace("[", "").replace("]", "")
             sequence = row['DNA_sequence'] + '\n'
             f.write(fasta_identifier)
             f.write(sequence)
+            current_asv = row['asv_number']
+            current_EE = row['EE_number_y']
 	
 def buildfastas(cleaned_input_data):
     if os.path.exists("outputs"):
@@ -113,15 +120,16 @@ def buildfastas(cleaned_input_data):
     
     for primer_name in primer_names:
         primer_df = cleaned_input_data[cleaned_input_data['pcr_primer_name_forward'] == primer_name]
-        primer_df_asv = remove_duplicate_seqs(primer_df)
-        print(primer_df_asv)
+        primer_df = primer_df.sort_values('occurrenceID')
+        
+        primer_df = remove_duplicate_seqs(primer_df)
         if primer_name == "MiFish-UE-F" or primer_name == "MiMammal-UEB-F":
             file_name = 'MiFish_MiMammal.fa'
         else:
             file_name = f'{primer_name}.fa'
-        
-        write_fasta(primer_name, file_name, primer_df_asv)
 
+        write_fasta(file_name, primer_df)
+        
         print(f"Fasta file '{file_name}' created.")
         outputfiles.append(file_name)
         
@@ -176,9 +184,8 @@ def get_tip_list(tree_file, site, cleaned_input_data):
     else:
         primer = tree_file.replace("_aligned.tre", "")
         site_primer_data = site_data[site_data['pcr_primer_name_forward'] == primer]
-    site_primer_data_asv = remove_duplicate_seqs(site_primer_data)
-    columns_to_concatenate = ['asv_pattern', 'materialSampleID', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName', 'pcr_primer_name_forward']
-    tip_list = site_primer_data_asv.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_'), axis=1).tolist()
+    columns_to_concatenate = ['occurrenceID', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName']
+    tip_list = site_primer_data.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_').replace("[", "").replace("]", ""), axis=1).tolist()
     return tip_list
 
     
@@ -198,6 +205,7 @@ def calculatePD(input_tree_files, cleaned_input_data):
                 row_data = [site]
                 row_data2 = [site]
                 for tree_file in input_tree_files:
+                    print(tree_file)
                     subset_of_leaves = get_tip_list(tree_file, site, cleaned_input_data)
                     phylo_tree = Phylo.read("outputs/fasttree/"+tree_file, 'newick')
                     pd_value_subset, errors = faith_pd_subset(phylo_tree, subset_of_leaves)
