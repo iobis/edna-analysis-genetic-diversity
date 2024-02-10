@@ -149,7 +149,7 @@ def alignseqs(fasta_list):
 def createphylogeny(aligned_fasta_list):
     outputfiles = []
     os.makedirs("outputs/fasttree", exist_ok=True)
-    mafft_command = "fasttree -nt {} > {}"
+    mafft_command = "fasttree -nt -gtr -fastest {} > {}"
     
     for input_file in aligned_fasta_list:
         output_file = f'{os.path.splitext(os.path.basename(input_file))[0]}.tre'
