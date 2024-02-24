@@ -89,9 +89,9 @@ def cleaninputdata(input_data):
 
 
 def remove_duplicate_seqs(df):
-
+    df = df.sort_values(by='occurrenceID')
     df[['asv_number', 'EE_number', 'rest']] = df['occurrenceID'].str.split('_', n=2, expand=True)
-    df_grouped = df.groupby(['asv_number', 'DNA_sequence'])['EE_number'].agg(lambda x: '_'.join(x)).reset_index()
+    df_grouped = df.groupby(['asv_number', 'DNA_sequence', 'higherGeography', 'pcr_primer_name_forward'])['EE_number'].agg(lambda x: '_'.join(x)).reset_index()
     result_df = pd.merge(df, df_grouped, on=['asv_number', 'DNA_sequence'])
     return result_df
 
@@ -120,8 +120,6 @@ def buildfastas(cleaned_input_data):
     
     for primer_name in primer_names:
         primer_df = cleaned_input_data[cleaned_input_data['pcr_primer_name_forward'] == primer_name]
-        primer_df = primer_df.sort_values('occurrenceID')
-        
         primer_df = remove_duplicate_seqs(primer_df)
         if primer_name == "MiFish-UE-F" or primer_name == "MiMammal-UEB-F":
             file_name = 'MiFish_MiMammal.fa'
@@ -174,38 +172,57 @@ def faith_pd_subset(tree, subset_leaves):
 
 def get_tip_list(tree_file, site, cleaned_input_data):
     #gets list of tips that are from a site for a specific primer
+    columns_to_concatenate = ['asv_number', 'EE_number_y', 'rest', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName']
+    
     site_data = cleaned_input_data[cleaned_input_data['higherGeography'] == site]
     if tree_file.replace("_aligned.tre", "") == "MiFish_MiMammal":
-        
+        print("\tMiFish_MiMammal")
+        #do mifish
         site_primer_data = site_data[
-            (site_data['pcr_primer_name_forward'] == 'MiFish-UE-F') | 
+            (site_data['pcr_primer_name_forward'] == 'MiFish-UE-F')
+        ]
+        
+        site_primer_data_merged = remove_duplicate_seqs(site_primer_data)
+        tip_list_fish = site_primer_data_merged.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_').replace("[", "").replace("]", ""), axis=1).tolist()
+
+        #do mimammal
+        site_primer_data = site_data[
             (site_data['pcr_primer_name_forward'] == 'MiMammal-UEB-F')
         ]
+        site_primer_data_merged = remove_duplicate_seqs(site_primer_data)
+        tip_list_mammal = site_primer_data_merged.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_').replace("[", "").replace("]", ""), axis=1).tolist()
+        
+        #concat together
+        tip_list = tip_list_fish + tip_list_mammal
+
     else:
         primer = tree_file.replace("_aligned.tre", "")
+        print("\t", primer)
         site_primer_data = site_data[site_data['pcr_primer_name_forward'] == primer]
-    columns_to_concatenate = ['occurrenceID', 'kingdom', 'phylum', 'class', 'order', 'family', 'scientificName']
-    tip_list = site_primer_data.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_').replace("[", "").replace("]", ""), axis=1).tolist()
-    return tip_list
+
+        site_primer_data_merged = remove_duplicate_seqs(site_primer_data)
+        tip_list = site_primer_data_merged.apply(lambda row: '_'.join(map(str, row[columns_to_concatenate])).replace(' ', '_').replace("[", "").replace("]", ""), axis=1).tolist()
+
+    return set(tip_list)
 
     
 def calculatePD(input_tree_files, cleaned_input_data):
     site_names = cleaned_input_data['higherGeography'].unique()
     site_names = site_names[~pd.isna(site_names)]
     
-    with open("PD_raw_out.csv", 'w') as csv_file:
-        with open("PD_perspecies_out.csv", 'w') as csv_file2:
+    with open("outputs/PD_raw_out.csv", 'w') as csv_file:
+        with open("outputs/PD_perspecies_out.csv", 'w') as csv_file2:
             csv_writer = csv.writer(csv_file, delimiter=',')
             csv_writer.writerow([''] + input_tree_files)
             
             csv_writer2 = csv.writer(csv_file2, delimiter=',')
             csv_writer2.writerow([''] + input_tree_files)
-                
+              
             for site in site_names:
+                print("Calculating phylodiversity for ", site)
                 row_data = [site]
                 row_data2 = [site]
                 for tree_file in input_tree_files:
-                    print(tree_file)
                     subset_of_leaves = get_tip_list(tree_file, site, cleaned_input_data)
                     phylo_tree = Phylo.read("outputs/fasttree/"+tree_file, 'newick')
                     pd_value_subset, errors = faith_pd_subset(phylo_tree, subset_of_leaves)
