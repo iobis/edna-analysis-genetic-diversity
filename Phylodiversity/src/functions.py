@@ -57,10 +57,9 @@ def importdata(folder_path):
     # Get a list of all files in the folder
     pattern = os.path.join(folder_path, '*_DNADerivedData.tsv')
     files = glob.glob(pattern)
-    
+    #files = ['raw_data/output/aldabra_atoll_DNADerivedData.tsv','raw_data/output/coiba_national_park_and_its_special_zone_of_marine_protection_DNADerivedData.tsv']
     # Initialize an empty DataFrame to store the combined data
     combined_data = pd.DataFrame()
-
     # Iterate over the files in the folder
     for file_name in files:
         site_name = os.path.basename(file_name).replace("_DNADerivedData.tsv", "")
@@ -73,9 +72,8 @@ def importdata(folder_path):
         DNADeriveddata = pd.read_csv(file_name, sep='\t', low_memory=False)
         Occurrencedata = pd.read_csv(file_path, sep='\t', low_memory=False)
         mergeddata = pd.merge(DNADeriveddata, Occurrencedata, on='occurrenceID', how='inner')
-
+        
         combined_data = pd.concat([combined_data, mergeddata], ignore_index=True)
-
     return combined_data
 
 def cleaninputdata(input_data):
@@ -92,7 +90,8 @@ def remove_duplicate_seqs(df):
     df = df.sort_values(by='occurrenceID')
     df[['asv_number', 'EE_number', 'rest']] = df['occurrenceID'].str.split('_', n=2, expand=True)
     df_grouped = df.groupby(['asv_number', 'DNA_sequence', 'higherGeography', 'pcr_primer_name_forward'])['EE_number'].agg(lambda x: '_'.join(x)).reset_index()
-    result_df = pd.merge(df, df_grouped, on=['asv_number', 'DNA_sequence'])
+    #this is merging wrong for some reason
+    result_df = pd.merge(df, df_grouped, on=['asv_number', 'DNA_sequence', 'higherGeography', 'pcr_primer_name_forward'])
     return result_df
 
 def write_fasta(file_name, df):
@@ -101,7 +100,7 @@ def write_fasta(file_name, df):
     os.makedirs("outputs/unaligned_fasta", exist_ok=True)
     with open("outputs/unaligned_fasta/"+file_name, 'a') as f:
         for index, row in df.iterrows():
-            if current_asv == row['asv_number'] and current_EE == row['EE_number_y']:
+            if (current_asv == row['asv_number']) and (current_EE == row['EE_number_y']):
                 continue
             fasta_identifier = f">{row['asv_number']}_{row['EE_number_y']}_{row['rest']}_{row['kingdom']}_{row['phylum']}_{row['class']}_{row['order']}_{row['family']}_{row['scientificName']}\n"
             fasta_identifier = fasta_identifier.replace(" ", "_").replace("[", "").replace("]", "")
@@ -114,13 +113,13 @@ def write_fasta(file_name, df):
 def buildfastas(cleaned_input_data):
     if os.path.exists("outputs"):
         shutil.rmtree("outputs")
-        
     outputfiles = []
     primer_names = cleaned_input_data['pcr_primer_name_forward'].unique()
-    
+    #primer_names = ["teleo_F_L1848"]
     for primer_name in primer_names:
         primer_df = cleaned_input_data[cleaned_input_data['pcr_primer_name_forward'] == primer_name]
         primer_df = remove_duplicate_seqs(primer_df)
+
         if primer_name == "MiFish-UE-F" or primer_name == "MiMammal-UEB-F":
             file_name = 'MiFish_MiMammal.fa'
         else:

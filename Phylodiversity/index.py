@@ -13,9 +13,9 @@ if __name__ == "__main__":
 
     cleaned_input_data = cleaninputdata(input_data)
 
-    #fasta_list = buildfastas(cleaned_input_data)
-    #aligned_fasta_list = alignseqs(fasta_list)
+    fasta_list = buildfastas(cleaned_input_data)
+    aligned_fasta_list = alignseqs(fasta_list)
     #aligned_fasta_list = ["MiFish_MiMammal_aligned.fasta", "mlCOIintF_aligned.fasta", "teleo_F_L1848_aligned.fasta", "Vert-16S-eDNA-F1_aligned.fasta"]
-    #tree_list = createphylogeny(aligned_fasta_list)
-    tree_list = ["MiFish_MiMammal_aligned.tre", "mlCOIintF_aligned.tre", "teleo_F_L1848_aligned.tre", "Vert-16S-eDNA-F1_aligned.tre"]
+    tree_list = createphylogeny(aligned_fasta_list)
+    #tree_list = ["MiFish_MiMammal_aligned.tre", "mlCOIintF_aligned.tre", "teleo_F_L1848_aligned.tre", "Vert-16S-eDNA-F1_aligned.tre"]
     calculatePD(tree_list, cleaned_input_data)
